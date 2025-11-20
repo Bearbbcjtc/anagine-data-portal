@@ -65,6 +65,7 @@ import ReduxWorkspaceShutdownBanner from './Popup/ReduxWorkspaceShutdownBanner';
 import ErrorWorkspacePlaceholder from './Workspace/ErrorWorkspacePlaceholder';
 import { ReduxStudyViewer, ReduxSingleStudyViewer } from './StudyViewer/reduxer';
 import NotFound from './components/NotFound';
+import AnaginePage from './Anagine';
 
 // monitor user's session
 sessionMonitor.start();
@@ -450,6 +451,19 @@ async function init() {
                         <ProtectedContent
                           public
                           component={ReduxSingleStudyViewer}
+                          {...props}
+                        />
+                      )
+                    }
+                  />
+                  {/* Anagine */}
+                  <Route
+                    exact
+                    path='/anagine'
+                    component={
+                      (props) => (
+                        <ProtectedContent
+                          component={AnaginePage}
                           {...props}
                         />
                       )

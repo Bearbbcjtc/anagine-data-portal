@@ -85,6 +85,15 @@ class GuppyDataExplorer extends React.Component {
         }
       }
       newExplorerState.filter = event;
+      
+      // Save filters to localStorage for Anagine Explorer
+      try {
+        localStorage.setItem('guppy_explorer_filters', JSON.stringify(event));
+        console.log('Saved filters to localStorage for Anagine:', event);
+      } catch (error) {
+        console.error('Error saving filters to localStorage:', error);
+      }
+      
       return { encodableExplorerStateForURL: newExplorerState };
     });
   }

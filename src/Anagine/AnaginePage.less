@@ -1,0 +1,63 @@
+.anagine-page {
+    padding: 20px;
+    min-height: calc(100vh - 200px);
+    
+    .anagine-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      
+      h1 {
+        margin-bottom: 20px;
+        color: #052049;
+      }
+    }
+  
+    .llm-history {
+      max-height: 500px;
+      overflow-y: auto;
+      margin-bottom: 20px;
+      padding: 15px;
+      background: #f5f5f5;
+      border-radius: 8px;
+  
+      .message {
+        margin-bottom: 15px;
+        padding: 10px;
+        border-radius: 5px;
+        
+        &.user {
+          background: #e6f7ff;
+          text-align: right;
+        }
+        
+        &.assistant {
+          background: #ffffff;
+          border: 1px solid #d9d9d9;
+        }
+  
+        strong {
+          display: block;
+          margin-bottom: 5px;
+          color: #052049;
+        }
+  
+        p {
+          margin: 0;
+          white-space: pre-wrap;
+        }
+      }
+    }
+  
+    .llm-input {
+      margin-top: 20px;
+    }
+  
+    pre {
+      background: #f5f5f5;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-x: auto;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+  }
