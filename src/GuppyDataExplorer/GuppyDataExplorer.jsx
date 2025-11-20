@@ -86,12 +86,22 @@ class GuppyDataExplorer extends React.Component {
       }
       newExplorerState.filter = event;
       
-      // Save filters to localStorage for Anagine Explorer
+      // Save complete explorer state to localStorage for Anagine Explorer
       try {
-        localStorage.setItem('guppy_explorer_filters', JSON.stringify(event));
-        console.log('Saved filters to localStorage for Anagine:', event);
+        const explorerState = {
+          filter: event,
+          guppyConfig: {
+            dataType: this.props.guppyConfig.dataType,
+            path: this.props.guppyConfig.path,
+            fieldMapping: this.props.guppyConfig.fieldMapping,
+            accessibleFieldCheckList: this.props.guppyConfig.accessibleFieldCheckList,
+          },
+          timestamp: new Date().toISOString(),
+        };
+        localStorage.setItem('guppy_explorer_filters', JSON.stringify(explorerState));
+        console.log('Saved explorer state to localStorage for Anagine:', explorerState);
       } catch (error) {
-        console.error('Error saving filters to localStorage:', error);
+        console.error('Error saving explorer state to localStorage:', error);
       }
       
       return { encodableExplorerStateForURL: newExplorerState };

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from 'antd';
 import { getAllFieldsFromGuppy } from '@gen3/guppy/dist/components/Utils/queries';
-import { explorerConfig, guppyUrl } from '../localconf'; 
+import { explorerConfig, guppyUrl } from '../localconf';
 
 const DEBUG = process.env.NODE_ENV === 'development';
 const EXPLORER_FILTER_KEY = 'guppy_explorer_filters';
@@ -13,10 +13,18 @@ const AnagineExplorer = () => {
   const [currentFilter, setCurrentFilter] = useState({});
   const [explorerFilter, setExplorerFilter] = useState(null);
   const [availableFields, setAvailableFields] = useState([]);
+  const [activeDataType, setActiveDataType] = useState(null);
+  
+  // Use ref to always get the latest availableFields
+  const availableFieldsRef = React.useRef(availableFields);
+  React.useEffect(() => {
+    availableFieldsRef.current = availableFields;
+  }, [availableFields]);
 
-  const dataType = explorerConfig[0]?.guppyConfig?.dataType || 'subject';
+  // Use dataType from explorer state if available, otherwise use default from config
+  const dataType = activeDataType || explorerConfig[0]?.guppyConfig?.dataType || 'subject';
 
-  if (DEBUG) console.log('Using dataType:', dataType);
+  if (DEBUG) console.log('Using dataType:', dataType, '(from explorer:', activeDataType !== null, ')');
 
   // login to Anagine
   useEffect(() => {
@@ -39,43 +47,65 @@ const AnagineExplorer = () => {
   }, []);
 
   useEffect(() => {
-    if (DEBUG) console.log('Fetching available fields for type:', dataType);
+    // Reset availableFields when dataType changes
+    setAvailableFields([]);
+    
+    console.log('Fetching available fields for type:', dataType, 'from:', guppyUrl);
     getAllFieldsFromGuppy(guppyUrl, dataType)
       .then(fields => {
-        if (DEBUG) console.log('Available fields:', fields);
+        console.log('Loaded', fields.length, 'fields for', dataType, ':', fields);
         setAvailableFields(fields);
       })
       .catch(error => {
-        console.error('Error fetching fields:', error);
+        console.error('Error fetching fields for', dataType, ':', error);
+        setAvailableFields([]);
       });
   }, [dataType]);
 
-  // Try to load filters from localStorage when component mounts
+  // Try to load complete explorer state from localStorage when component mounts
   useEffect(() => {
-    const loadExplorerFilters = () => {
+    const loadExplorerState = () => {
       try {
-        const savedFilters = localStorage.getItem(EXPLORER_FILTER_KEY);
-        if (savedFilters) {
-          const filters = JSON.parse(savedFilters);
-          if (DEBUG) console.log('Loaded filters from localStorage:', filters);
-          setExplorerFilter(filters);
+        const savedData = localStorage.getItem(EXPLORER_FILTER_KEY);
+        if (savedData) {
+          const explorerState = JSON.parse(savedData);
+          if (DEBUG) console.log('Loaded explorer state from localStorage:', explorerState);
+
+          // Check if it's the new format (with guppyConfig)
+          if (explorerState.filter && explorerState.guppyConfig) {
+            setExplorerFilter(explorerState.filter);
+            setActiveDataType(explorerState.guppyConfig.dataType);
+            if (DEBUG) console.log('Using dataType from explorer:', explorerState.guppyConfig.dataType);
+          } else {
+            // Backward compatibility: old format (just the filter object)
+            setExplorerFilter(explorerState);
+            if (DEBUG) console.log('Using old filter format, dataType will be from config');
+          }
         }
       } catch (error) {
-        console.error('Error loading filters from localStorage:', error);
+        console.error('Error loading explorer state from localStorage:', error);
       }
     };
 
-    loadExplorerFilters();
+    loadExplorerState();
 
     // Listen for storage changes (when filters updated in another tab)
     const handleStorageChange = (e) => {
       if (e.key === EXPLORER_FILTER_KEY && e.newValue) {
         try {
-          const filters = JSON.parse(e.newValue);
-          if (DEBUG) console.log('Filters updated from another tab:', filters);
-          setExplorerFilter(filters);
+          const explorerState = JSON.parse(e.newValue);
+          if (DEBUG) console.log('Explorer state updated from another tab:', explorerState);
+
+          // Check if it's the new format (with guppyConfig)
+          if (explorerState.filter && explorerState.guppyConfig) {
+            setExplorerFilter(explorerState.filter);
+            setActiveDataType(explorerState.guppyConfig.dataType);
+          } else {
+            // Backward compatibility: old format
+            setExplorerFilter(explorerState);
+          }
         } catch (error) {
-          console.error('Error parsing filter update:', error);
+          console.error('Error parsing explorer state update:', error);
         }
       }
     };
@@ -85,54 +115,93 @@ const AnagineExplorer = () => {
   }, []);
 
   // Query Anagine with given filters
-  const queryAnagine = async (filter) => {
+  const queryAnagine = async (filter, fieldsToUse = null) => {
     if (!anagineToken) {
       if (DEBUG) console.log('Waiting for Anagine token...');
       return;
     }
-  
+
+    // Use provided fields or fall back to state
+    const currentFields = fieldsToUse || availableFields;
+    
+    // Wait for availableFields to load before querying
+    if (currentFields.length === 0) {
+      console.warn('Available fields not loaded yet, skipping query');
+      return;
+    }
+
     try {
       if (DEBUG) console.log('Querying Anagine with filters:', filter);
       if (DEBUG) console.log('Using dataType:', dataType);
-      if (DEBUG) console.log('Available fields count:', availableFields.length);
-      
-      // verify filter fields exist
+      if (DEBUG) console.log('Available fields count:', currentFields.length);
+
+      // verify filter fields exist and create cleaned filter
       const filterFields = Object.keys(filter);
-      const validFilterFields = filterFields.filter(f => availableFields.includes(f));
+      console.log('Validating filter fields:', filterFields);
+      console.log('Available fields for', dataType, ':', currentFields);
       
-      if (filterFields.length > validFilterFields.length) {
-        const invalidFields = filterFields.filter(f => !availableFields.includes(f));
-        if (DEBUG) console.warn('Some filter fields are not available:', invalidFields);
+      const validFilterFields = filterFields.filter(f => currentFields.includes(f));
+      console.log('Valid filter fields:', validFilterFields);
+      
+      // Check if all fields are invalid
+      if (filterFields.length > 0 && validFilterFields.length === 0) {
+        const invalidFields = filterFields.join(', ');
+        console.error('All filter fields are invalid for', dataType);
+        alert(`Warning: None of the filter fields (${invalidFields}) are available for data type "${dataType}".\n\nThese filters may be from a different data type. Please go to Explorer and select filters appropriate for "${dataType}" type.`);
+        return;
       }
-      
-      // let backend decide which fields to query
-      const queryFields = [];
-      
-      if (DEBUG) console.log('Query fields:', queryFields);
-      
-      const response = await fetch('/anagine/query', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${anagineToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          dataSource,
-          index: dataType,  // ← read from config, not hardcoded
-          filters: filter,
-          fields: queryFields,  // ← use real available fields
-          first: 100
-        })
+
+      // Create cleaned filter with only valid fields
+      const cleanedFilter = {};
+      validFilterFields.forEach(field => {
+        cleanedFilter[field] = filter[field];
       });
-  
+
+      // Warn about removed fields
+      if (filterFields.length > validFilterFields.length) {
+        const invalidFields = filterFields.filter(f => !currentFields.includes(f));
+        console.warn(`Removing invalid filter fields for dataType "${dataType}":`, invalidFields);
+        alert(`Some filter fields were removed because they don't exist in "${dataType}" type:\n${invalidFields.join(', ')}\n\nUsing only valid fields: ${validFilterFields.join(', ')}`);
+      }
+
+      console.log('Cleaned filters:', cleanedFilter);
+      console.log('Sending query with:', { dataType, filter: cleanedFilter });
+
+      // Use a subset of available fields for the query
+      // Take the first few valid fields, or use fields from the filter
+      const queryFields = validFilterFields.length > 0 
+        ? validFilterFields 
+        : currentFields.slice(0, Math.min(10, currentFields.length));
+
+      console.log('Selected query fields:', queryFields);
+
+      const requestBody = {
+        dataSource,
+        index: dataType,
+        filters: cleanedFilter,
+        fields: queryFields,
+        first: 100
+      };
+      
+      console.log('Full request body:', JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch('/anagine/query', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${anagineToken}`,
+        'Content-Type': 'application/json'
+      },
+        body: JSON.stringify(requestBody)
+      });
+
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Query failed: ${response.status} - ${errorText}`);
       }
-  
-      const result = await response.json();
-      setAnagineData(result);
-      setCurrentFilter(filter);
+
+    const result = await response.json();
+    setAnagineData(result);
+      setCurrentFilter(cleanedFilter);  // ✅ Save cleaned filter
     } catch (error) {
       console.error('Query error:', error);
       alert('Query failed: ' + error.message);
@@ -142,7 +211,10 @@ const AnagineExplorer = () => {
   // Use filters from Explorer
   const handleUseExplorerFilters = () => {
     if (explorerFilter) {
-      queryAnagine(explorerFilter);
+      // Use ref to get the latest availableFields
+      const latestFields = availableFieldsRef.current;
+      console.log('Button clicked, using', latestFields.length, 'fields for', dataType);
+      queryAnagine(explorerFilter, latestFields);
     }
   };
 
@@ -152,22 +224,39 @@ const AnagineExplorer = () => {
       <p style={{ color: '#666', marginBottom: '20px' }}>
         Query data through Anagine using filters from the main Explorer page
       </p>
-      
+
       {/* Connection status */}
       <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: anagineToken ? '#d4edda' : '#fff3cd', borderRadius: '4px' }}>
-        <strong>Status:</strong> {anagineToken ? '✓ Connected to Anagine' : '⏳ Connecting...'}
+        <strong>Status:</strong> {anagineToken ? 'Connected to Anagine' : 'Connecting...'}
+      </div>
+
+      {/* Data Type Info */}
+      <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '4px', border: '1px solid #b3d9ff' }}>
+        <strong>Active Data Type:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold' }}>{dataType}</code>
+        {activeDataType && (
+          <span style={{ marginLeft: '10px', fontSize: '12px', color: '#666' }}>
+            (synced from Explorer)
+          </span>
+        )}
+        {!activeDataType && (
+          <span style={{ marginLeft: '10px', fontSize: '12px', color: '#999' }}>
+            (using default from config)
+          </span>
+        )}
       </div>
 
       {/* data source switcher */}
       <div style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ddd', borderRadius: '4px', backgroundColor: '#f8f9fa' }}>
         <label style={{ fontWeight: 'bold', marginRight: '10px' }}>Data Source:</label>
-        <select 
-          value={dataSource} 
+        <select
+          value={dataSource}
           onChange={(e) => {
             setDataSource(e.target.value);
             // Re-query with new data source if we have filters
-            if (anagineToken && Object.keys(currentFilter).length > 0) {
-              queryAnagine(currentFilter);
+            // Use ref to get the latest availableFields
+            const latestFields = availableFieldsRef.current;
+            if (anagineToken && latestFields.length > 0 && Object.keys(currentFilter).length > 0) {
+              queryAnagine(currentFilter, latestFields);
             }
           }}
           style={{ padding: '5px 10px', fontSize: '14px' }}
@@ -186,7 +275,7 @@ const AnagineExplorer = () => {
         <p style={{ fontSize: '13px', color: '#666', marginBottom: '15px' }}>
           Go to <a href="/explorer" target="_blank" rel="noopener noreferrer" style={{ color: '#007bff' }}>/explorer</a> page, select your filters, then come back here and click "Use Explorer Filters".
         </p>
-        
+
         {explorerFilter ? (
           <div>
             <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #ddd' }}>
@@ -195,15 +284,20 @@ const AnagineExplorer = () => {
                 {JSON.stringify(explorerFilter, null, 2)}
               </pre>
             </div>
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               onClick={handleUseExplorerFilters}
-              disabled={!anagineToken}
+              disabled={!anagineToken || availableFields.length === 0}
               style={{ marginRight: '10px' }}
             >
               Use Explorer Filters
             </Button>
-            <Button 
+            {availableFields.length === 0 && anagineToken && (
+              <div style={{ marginTop: '10px', fontSize: '12px', color: '#999' }}>
+                Loading available fields for <code>{dataType}</code>...
+              </div>
+            )}
+            <Button
               onClick={() => {
                 localStorage.removeItem(EXPLORER_FILTER_KEY);
                 setExplorerFilter(null);
@@ -215,7 +309,7 @@ const AnagineExplorer = () => {
         ) : (
           <div style={{ padding: '10px', backgroundColor: '#fff3cd', borderRadius: '4px' }}>
             <p style={{ margin: 0 }}>
-              ℹ️ No filters found. Please go to the <a href="/explorer" target="_blank" rel="noopener noreferrer" style={{ color: '#007bff' }}>/explorer</a> page and select some filters first.
+              No filters found. Please go to the <a href="/explorer" target="_blank" rel="noopener noreferrer" style={{ color: '#007bff' }}>/explorer</a> page and select some filters first.
             </p>
           </div>
         )}
@@ -250,7 +344,7 @@ const AnagineExplorer = () => {
 
       {!anagineData && anagineToken && Object.keys(currentFilter).length === 0 && (
         <div style={{ marginTop: '20px', padding: '15px', border: '1px solid #ccc', borderRadius: '4px', backgroundColor: '#f9f9f9', textAlign: 'center', color: '#666' }}>
-          👆 Import and use filters from Explorer to query data
+          Import and use filters from Explorer to query data
         </div>
       )}
     </div>
