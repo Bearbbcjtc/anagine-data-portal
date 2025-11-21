@@ -23,8 +23,20 @@ const AnagineExplorer = () => {
 
   // Use dataType from explorer state if available, otherwise use default from config
   const dataType = activeDataType || explorerConfig[0]?.guppyConfig?.dataType || 'subject';
+  
+  // Use ref to always get the latest dataType
+  const dataTypeRef = React.useRef(dataType);
+  React.useEffect(() => {
+    dataTypeRef.current = dataType;
+  }, [dataType]);
+
+  // Find the matching explorerConfig for the current dataType
+  const currentExplorerConfig = explorerConfig.find(
+    config => config.guppyConfig?.dataType === dataType
+  );
 
   if (DEBUG) console.log('Using dataType:', dataType, '(from explorer:', activeDataType !== null, ')');
+  if (DEBUG) console.log('Current explorer config:', currentExplorerConfig);
 
   // login to Anagine
   useEffect(() => {
@@ -121,8 +133,9 @@ const AnagineExplorer = () => {
       return;
     }
 
-    // Use provided fields or fall back to state
-    const currentFields = fieldsToUse || availableFields;
+    // Use refs to get the latest values (solves closure issue)
+    const currentDataType = dataTypeRef.current;
+    const currentFields = fieldsToUse || availableFieldsRef.current;
     
     // Wait for availableFields to load before querying
     if (currentFields.length === 0) {
@@ -132,53 +145,54 @@ const AnagineExplorer = () => {
 
     try {
       if (DEBUG) console.log('Querying Anagine with filters:', filter);
-      if (DEBUG) console.log('Using dataType:', dataType);
+      if (DEBUG) console.log('Using dataType:', currentDataType);
       if (DEBUG) console.log('Available fields count:', currentFields.length);
 
-      // verify filter fields exist and create cleaned filter
-      const filterFields = Object.keys(filter);
-      console.log('Validating filter fields:', filterFields);
-      console.log('Available fields for', dataType, ':', currentFields);
+      // No filter validation - pass filters as-is to backend, just like GuppyWrapper does
+      // Guppy GraphQL will handle non-existent fields (they will be ignored)
+      console.log('Sending query with:', { dataType: currentDataType, filter });
+
+      // Get table fields from explorerConfig for the current dataType
+      const currentConfig = explorerConfig.find(
+        config => config.guppyConfig?.dataType === currentDataType
+      );
+      const configTableFields = currentConfig?.table?.fields || [];
+      console.log('========================================');
+      console.log('Table fields from config:', configTableFields);
+      console.log('Config has', configTableFields.length, 'fields');
+      console.log('Guppy has', currentFields.length, 'available fields');
       
-      const validFilterFields = filterFields.filter(f => currentFields.includes(f));
-      console.log('Valid filter fields:', validFilterFields);
+      // Filter config table fields to only include those available in Guppy
+      const validTableFields = configTableFields.filter(f => currentFields.includes(f));
+      const invalidTableFields = configTableFields.filter(f => !currentFields.includes(f));
       
-      // Check if all fields are invalid
-      if (filterFields.length > 0 && validFilterFields.length === 0) {
-        const invalidFields = filterFields.join(', ');
-        console.error('All filter fields are invalid for', dataType);
-        alert(`Warning: None of the filter fields (${invalidFields}) are available for data type "${dataType}".\n\nThese filters may be from a different data type. Please go to Explorer and select filters appropriate for "${dataType}" type.`);
-        return;
+      console.log('VALID fields (in both config and Guppy):', validTableFields);
+      console.log('VALID count:', validTableFields.length);
+      
+      if (invalidTableFields.length > 0) {
+        console.error('INVALID fields (in config but NOT in Guppy):', invalidTableFields);
+        console.error('INVALID count:', invalidTableFields.length);
+        console.error('These fields will cause GraphQL errors!');
       }
-
-      // Create cleaned filter with only valid fields
-      const cleanedFilter = {};
-      validFilterFields.forEach(field => {
-        cleanedFilter[field] = filter[field];
-      });
-
-      // Warn about removed fields
-      if (filterFields.length > validFilterFields.length) {
-        const invalidFields = filterFields.filter(f => !currentFields.includes(f));
-        console.warn(`Removing invalid filter fields for dataType "${dataType}":`, invalidFields);
-        alert(`Some filter fields were removed because they don't exist in "${dataType}" type:\n${invalidFields.join(', ')}\n\nUsing only valid fields: ${validFilterFields.join(', ')}`);
+      console.log('========================================');
+      
+      // If no valid fields from config, fallback to some available fields
+      let queryFields;
+      if (validTableFields.length > 0) {
+        queryFields = validTableFields;
+        console.log('Using', validTableFields.length, 'of', configTableFields.length, 'table config fields');
+      } else {
+        // Fallback: use first 15 available fields
+        queryFields = currentFields.slice(0, 15);
+        console.log('No table config fields available, using first', queryFields.length, 'available fields');
       }
-
-      console.log('Cleaned filters:', cleanedFilter);
-      console.log('Sending query with:', { dataType, filter: cleanedFilter });
-
-      // Use a subset of available fields for the query
-      // Take the first few valid fields, or use fields from the filter
-      const queryFields = validFilterFields.length > 0 
-        ? validFilterFields 
-        : currentFields.slice(0, Math.min(10, currentFields.length));
 
       console.log('Selected query fields:', queryFields);
 
       const requestBody = {
         dataSource,
-        index: dataType,
-        filters: cleanedFilter,
+        index: currentDataType,
+        filters: filter,  // ← Pass original filter as-is, no validation/cleaning
         fields: queryFields,
         first: 100
       };
@@ -201,7 +215,7 @@ const AnagineExplorer = () => {
 
     const result = await response.json();
     setAnagineData(result);
-      setCurrentFilter(cleanedFilter);  // ✅ Save cleaned filter
+      setCurrentFilter(filter);  // Save the filter used for querying
     } catch (error) {
       console.error('Query error:', error);
       alert('Query failed: ' + error.message);
@@ -232,16 +246,27 @@ const AnagineExplorer = () => {
 
       {/* Data Type Info */}
       <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '4px', border: '1px solid #b3d9ff' }}>
-        <strong>Active Data Type:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold' }}>{dataType}</code>
-        {activeDataType && (
-          <span style={{ marginLeft: '10px', fontSize: '12px', color: '#666' }}>
-            (synced from Explorer)
-          </span>
-        )}
-        {!activeDataType && (
-          <span style={{ marginLeft: '10px', fontSize: '12px', color: '#999' }}>
-            (using default from config)
-          </span>
+        <div>
+          <strong>Active Data Type:</strong> <code style={{ backgroundColor: '#fff', padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold' }}>{dataType}</code>
+          {activeDataType && (
+            <span style={{ marginLeft: '10px', fontSize: '12px', color: '#666' }}>
+              (synced from Explorer)
+            </span>
+          )}
+          {!activeDataType && (
+            <span style={{ marginLeft: '10px', fontSize: '12px', color: '#999' }}>
+              (using default from config)
+            </span>
+          )}
+        </div>
+        {currentExplorerConfig?.table?.fields && (
+          <div style={{ marginTop: '8px', fontSize: '13px', color: '#555' }}>
+            <strong>Configured Table Fields:</strong> {currentExplorerConfig.table.fields.length} fields
+            <span style={{ marginLeft: '10px', color: '#888' }}>
+              ({currentExplorerConfig.table.fields.slice(0, 5).join(', ')}
+              {currentExplorerConfig.table.fields.length > 5 ? ', ...' : ''})
+            </span>
+          </div>
         )}
       </div>
 
