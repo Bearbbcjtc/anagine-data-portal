@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from 'antd';
+import { Button, Dropdown, Menu, message } from 'antd';
+import { DownOutlined } from '@ant-design/icons';
 import { getAllFieldsFromGuppy } from '@gen3/guppy/dist/components/Utils/queries';
 import { explorerConfig, guppyUrl } from '../localconf';
 
@@ -9,6 +10,7 @@ const EXPLORER_FILTER_KEY = 'guppy_explorer_filters';
 const AnagineExplorer = () => {
   const [anagineToken, setAnagineToken] = useState(null);
   const [anagineData, setAnagineData] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const [dataSource, setDataSource] = useState('guppy'); // 'guppy' or 'memory'
   const [currentFilter, setCurrentFilter] = useState({});
   const [explorerFilter, setExplorerFilter] = useState(null);
@@ -192,9 +194,11 @@ const AnagineExplorer = () => {
       const requestBody = {
         dataSource,
         index: currentDataType,
-        filters: filter,  // ← Pass original filter as-is, no validation/cleaning
+        filters: filter,
         fields: queryFields,
-        first: 100
+        first: 100,
+        offset: 0,
+        fetchAll: true,
       };
       
       console.log('Full request body:', JSON.stringify(requestBody, null, 2));
@@ -222,13 +226,66 @@ const AnagineExplorer = () => {
     }
   };
 
+  // Common parameters: aligned with POST /anagine/query and POST /anagine/report
+  const buildQueryParams = () => {
+    const filters = explorerFilter || {};
+    const configTableFields = currentExplorerConfig?.table?.fields || [];
+    const validTableFields = configTableFields.filter(f => availableFields.includes(f));
+    const fields = validTableFields.length > 0 ? validTableFields : availableFields.slice(0, 15);
+    const index = dataType;
+    return { filters, fields, index };
+  };
+
   // Use filters from Explorer
   const handleUseExplorerFilters = () => {
     if (explorerFilter) {
-      // Use ref to get the latest availableFields
       const latestFields = availableFieldsRef.current;
       console.log('Button clicked, using', latestFields.length, 'fields for', dataType);
       queryAnagine(explorerFilter, latestFields);
+    }
+  };
+
+  // Generate report (template: basic_report or demo_age_meld_report)
+  const handleGenerateReport = async (template) => {
+    if (!anagineToken) {
+      message.error('Please connect to Anagine first');
+      return;
+    }
+    setReportLoading(true);
+    try {
+      const templateMap = {
+        basic_report: 'basic_report',
+        demo_age_meld_report: 'demo_age_meld_report',
+        test_report: 'test_report',
+      };
+      const body = {
+        template: templateMap[template] || template,
+        format: 'html',
+        outName: null,
+        ...buildQueryParams(),
+      };
+      const res = await fetch('/anagine/report', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${anagineToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.status !== 'ok') {
+        throw new Error(data.error || 'Report failed');
+      }
+      if (data.reportPath) {
+        window.open(data.reportPath, '_blank');
+        message.success('Report generated successfully');
+      } else {
+        throw new Error('No report path returned');
+      }
+    } catch (err) {
+      message.error(err.message || 'Failed to generate report');
+    } finally {
+      setReportLoading(false);
     }
   };
 
@@ -317,6 +374,30 @@ const AnagineExplorer = () => {
             >
               Use Explorer Filters
             </Button>
+            <Dropdown
+              overlay={(
+                <Menu>
+                  <Menu.Item key="basic" onClick={() => handleGenerateReport('basic_report')}>
+                    Basic Report
+                  </Menu.Item>
+                  <Menu.Item key="age_meld" onClick={() => handleGenerateReport('demo_age_meld_report')}>
+                    Age/MELD Report
+                  </Menu.Item>
+                  <Menu.Item key="test" onClick={() => handleGenerateReport('test_report')}>
+                    Test Report
+                  </Menu.Item>
+                </Menu>
+              )}
+            >
+              <Button
+                type="primary"
+                loading={reportLoading}
+                disabled={!anagineToken}
+                style={{ marginRight: '10px' }}
+              >
+                Generate Report <DownOutlined />
+              </Button>
+            </Dropdown>
             {availableFields.length === 0 && anagineToken && (
               <div style={{ marginTop: '10px', fontSize: '12px', color: '#999' }}>
                 Loading available fields for <code>{dataType}</code>...

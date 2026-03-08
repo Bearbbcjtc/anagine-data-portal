@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Input, Select, Card, message, Spin, Tabs, Row, Col } from 'antd';
 // import './AnaginePage.less';
-import AnagineTestPanel from './AnagineTestPanel.jsx';
 import AnagineExplorer from './AnagineExplorer.jsx';
 
 const { TextArea } = Input;
@@ -11,6 +10,7 @@ const AnaginePage = () => {
     // state management
     const [loading, setLoading] = useState(false);
     const [anagineToken, setAnagineToken] = useState(null);
+    const [loginError, setLoginError] = useState(null);
     const [kernel, setKernel] = useState('R');
     const [dataset, setDataset] = useState('ARDaC-AlcHepNet');
 
@@ -35,19 +35,25 @@ const AnaginePage = () => {
     // login to Anagine
     const loginToAnagine = async () => {
         setLoading(true);
+        setLoginError(null);
         try {
             const response = await fetch(`${ANAGINE_BASE}/login`, {
                 method: 'POST',
                 credentials: 'include',  // browser will automatically send cookies
             });
 
-            if (!response.ok) throw new Error('Anagine login failed');
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                const errMsg = data.error || data.hint || `HTTP ${response.status}`;
+                throw new Error(errMsg);
+            }
 
-            const data = await response.json();
             setAnagineToken(data.token);
             message.success('Connected to Anagine');
         } catch (error) {
-            message.error(`Failed to connect to Anagine: ${error.message}`);
+            const errMsg = error.message || 'Unknown error';
+            setLoginError(errMsg);
+            message.error(`Failed to connect to Anagine: ${errMsg}`);
         } finally {
             setLoading(false);
         }
@@ -181,7 +187,17 @@ const AnaginePage = () => {
                 {!anagineToken ? (
                     <Card>
                         <Spin size="large" />
-                        <p>Connecting to Anagine...</p>
+                        <p>{loginError ? `Connection failed: ${loginError}` : 'Connecting to Anagine...'}</p>
+                        {loginError && (
+                            <>
+                                <p style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+                                    Please verify: 1) Revproxy is configured for /anagine proxy 2) Anagine service is deployed 3) You are logged in to Gen3
+                                </p>
+                                <Button type="primary" onClick={loginToAnagine} style={{ marginTop: 12 }}>
+                                    Retry connection
+                                </Button>
+                            </>
+                        )}
                     </Card>
                 ) : (
                     <Tabs 
@@ -224,6 +240,11 @@ const AnaginePage = () => {
                                         </div>
                                     </Card>
                                 ),
+                            },
+                            {
+                                key: 'explorer',
+                                label: 'Anagine Explorer',
+                                children: <AnagineExplorer />,
                             },
                             {
                                 key: 'analysis',
@@ -303,16 +324,6 @@ const AnaginePage = () => {
                                         </Col>
                                     </Row>
                                 ),
-                            },
-                            {
-                                key: 'test',
-                                label: 'Performance Test',
-                                children: <AnagineTestPanel />,
-                            },
-                            {
-                                key: 'explorer',
-                                label: 'Anagine Explorer',
-                                children: <AnagineExplorer />,
                             },
                         ]}
                     />
